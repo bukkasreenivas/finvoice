@@ -39,7 +39,7 @@ Users speak (or type) natural language financial questions. A supervisor agent r
 
 ## Current state of the repo
 
-The GitHub repo is live at `https://github.com/bukkasreenivas/finvoice`. All PM artefacts are complete and committed to `main`. The next phase is backend and frontend code.
+The GitHub repo is live at `https://github.com/bukkasreenivas/finvoice`. All PM artefacts and the full backend and frontend scaffold are committed to `main`.
 
 ### What is complete
 
@@ -51,64 +51,68 @@ finvoice/
 ├── docker-compose.yml           ✅ done — FastAPI, React, PostgreSQL + pgvector, Redis
 ├── .env.example                 ✅ done — all required env vars documented
 ├── .gitignore                   ✅ done
-└── docs/
-    ├── PRD.md                   ✅ done — Layer 1
-    ├── user-research.md         ✅ done — Layer 1
-    ├── competitive-analysis.md  ✅ done — Layer 1 (Indian market: CRED, Fi Money, Jupiter, Groww, Money View)
-    ├── roadmap.md               ✅ done — Layer 2
-    ├── metrics.md               ✅ done — Layer 2
-    ├── experiment-design.md     ✅ done — Layer 2
-    └── ai-prompt-journal.md     ✅ done — Layer 3
+├── docs/
+│   ├── PRD.md                   ✅ done — Layer 1
+│   ├── user-research.md         ✅ done — Layer 1
+│   ├── competitive-analysis.md  ✅ done — Layer 1 (Indian market: CRED, Fi Money, Jupiter, Groww, Money View)
+│   ├── roadmap.md               ✅ done — Layer 2
+│   ├── metrics.md               ✅ done — Layer 2
+│   ├── experiment-design.md     ✅ done — Layer 2
+│   └── ai-prompt-journal.md     ✅ done — Layer 3
+├── backend/                     ✅ done — Layer 4
+│   ├── main.py                  ✅ FastAPI entrypoint, CORS, lifespan startup
+│   ├── config.py                ✅ Pydantic-settings, all env vars
+│   ├── requirements.txt         ✅ all dependencies pinned
+│   ├── Dockerfile               ✅ builds with faster-whisper model baked in
+│   ├── agents/
+│   │   ├── supervisor.py        ✅ LangGraph StateGraph + Claude Haiku routing
+│   │   ├── spending.py          ✅ Spending Analyst with AA transaction context
+│   │   ├── investment.py        ✅ Investment Advisor with NSE/BSE quotes + SEBI disclaimer
+│   │   ├── tax.py               ✅ Tax Optimizer with static CBDT/IT Act RAG context + disclaimer
+│   │   └── budget.py            ✅ Budget Planner with cash flow summary
+│   ├── tools/
+│   │   ├── account_aggregator.py ✅ Finvu sandbox + synthetic Indian data fallback
+│   │   ├── nse_bse.py           ✅ yfinance .NS/.BO + CoinGecko + Redis cache
+│   │   └── whisper.py           ✅ faster-whisper locally, Deepgram in production
+│   ├── routers/
+│   │   ├── chat.py              ✅ POST /chat + WebSocket /chat/ws with audit log
+│   │   └── voice.py             ✅ POST /voice/transcribe with file validation
+│   └── models/
+│       ├── schemas.py           ✅ Pydantic schemas for all endpoints
+│       └── database.py          ✅ SQLAlchemy + pgvector + HNSW index + init_db
+└── frontend/                    ✅ done — Layer 4 (scaffold)
+    ├── package.json             ✅ React 18, TypeScript
+    ├── tsconfig.json            ✅
+    ├── Dockerfile               ✅ multi-stage nginx build
+    ├── nginx.conf               ✅
+    ├── public/index.html        ✅
+    └── src/
+        ├── App.tsx              ✅
+        ├── index.tsx            ✅
+        ├── components/
+        │   ├── ChatInterface.tsx ✅ streaming UI, input row, scroll management
+        │   ├── VoiceInput.tsx   ✅ push-to-talk, MediaRecorder, transcript confirmation
+        │   ├── AgentBadge.tsx   ✅ colour-coded badge per specialist agent
+        │   └── MessageBubble.tsx ✅ streaming cursor, markdown-ready
+        └── hooks/
+            ├── useWebSocket.ts  ✅ WebSocket with auto-reconnect, token accumulation
+            └── useVoice.ts      ✅ MediaRecorder + POST /voice/transcribe
 ```
 
-### What to build next — backend (Layer 4)
-
-```
-backend/
-├── main.py                      ← FastAPI app entrypoint
-├── agents/
-│   ├── supervisor.py            ← LangGraph supervisor agent with routing logic
-│   ├── spending.py              ← Spending Analyst agent
-│   ├── investment.py            ← Investment Advisor agent
-│   ├── tax.py                   ← Tax Optimizer agent (ITR scope, CBDT RAG)
-│   └── budget.py                ← Budget Planner agent
-├── tools/
-│   ├── account_aggregator.py    ← Finvu Account Aggregator sandbox integration
-│   ├── nse_bse.py               ← NSE/BSE market data via yfinance (.NS suffix)
-│   └── whisper.py               ← Voice transcription via faster-whisper
-├── routers/
-│   ├── chat.py                  ← POST /chat, WebSocket /ws/chat
-│   └── voice.py                 ← POST /voice/transcribe
-├── models/
-│   ├── schemas.py               ← Pydantic request/response models
-│   └── database.py              ← SQLAlchemy models + pgvector setup
-└── requirements.txt
-```
-
-### What to build next — frontend (Layer 5)
-
-```
-frontend/
-├── src/
-│   ├── App.tsx
-│   ├── components/
-│   │   ├── ChatInterface.tsx    ← Main chat UI with streaming
-│   │   ├── VoiceInput.tsx       ← Push-to-talk button + waveform
-│   │   ├── AgentBadge.tsx       ← Shows which agent responded
-│   │   ├── MessageBubble.tsx    ← Streaming message renderer
-│   │   └── ConfidenceBar.tsx    ← Trust indicator
-│   └── hooks/
-│       ├── useWebSocket.ts      ← WebSocket connection management
-│       └── useVoice.ts          ← Browser mic + audio capture
-└── package.json
-```
-
-### What to build next — docs (remaining)
+### What to build next
 
 ```
 docs/
-└── architecture.md              ← Technical architecture diagram in Mermaid (detailed)
+└── architecture.md              ← Detailed Mermaid architecture diagram (optional)
 ```
+
+The app is functional end-to-end. To run locally:
+```bash
+cp .env.example .env
+# Add ANTHROPIC_API_KEY at minimum
+docker-compose up
+```
+Then open `http://localhost:3000`.
 
 ---
 
@@ -289,6 +293,6 @@ To continue building in a new Claude Code session:
 3. Say: "Read CLAUDE.md and continue" — Claude Code will have full context
 
 **Last updated:** 22 March 2026
-**Current phase:** Layer 4 — backend code (deployment architecture confirmed)
+**Current phase:** Complete — all four layers built and pushed to main
 **GitHub repo:** `https://github.com/bukkasreenivas/finvoice`
 **Deployment:** Vercel (frontend) + Railway (backend) + Supabase (DB) + Upstash (Redis)
