@@ -28,11 +28,12 @@ Users speak (or type) natural language financial questions. A supervisor agent r
 - Backend: Python 3.11+, FastAPI, LangGraph (multi-agent orchestration)
 - Frontend: React 18, TypeScript, WebSocket for real-time streaming
 - Database: PostgreSQL + pgvector extension
-- Voice: OpenAI Whisper self-hosted via `faster-whisper`
+- Voice: faster-whisper self-hosted (local), Deepgram API (production)
 - Data APIs: Account Aggregator via Finvu sandbox (banking), NSE/BSE via yfinance (.NS suffix), CoinGecko (crypto)
 - LLM: Claude claude-sonnet-4-6 (primary), Groq Llama 3 (fallback)
-- Cache: Redis (60s TTL on all market data calls)
-- Deployment: Docker Compose (local), Railway or Render (live demo)
+- Cache: Redis locally, Upstash (serverless Redis, free tier) in production
+- Database: PostgreSQL + pgvector locally, Supabase free tier in production (pgvector enabled by default)
+- Deployment: Docker Compose (local) | Vercel (frontend) + Railway (backend) in production
 
 ---
 
@@ -123,6 +124,15 @@ Reason: Zero cost, no data leaving the system, faster-whisper runs acceptably on
 
 **ADR-003: Account Aggregator (AA) framework sandbox only (no real banking data)**
 Reason: Open source project. Real data introduces compliance obligations under RBI's AA framework. Finvu sandbox provides realistic Indian transaction data for demo purposes.
+
+**ADR-005: Vercel (frontend) + Railway (backend) split deployment**
+Reason: Vercel does not support WebSockets or long-running processes on its serverless runtime. FastAPI with WebSocket streaming and Whisper transcription requires a persistent process. Railway free tier supports this. Vercel handles the React frontend optimally.
+
+**ADR-006: Supabase for PostgreSQL + pgvector in production**
+Reason: Supabase free tier provides PostgreSQL 15 with pgvector enabled by default. No manual extension setup needed. Standard postgresql:// connection string means zero code changes from local dev. Upstash provides equivalent serverless Redis with identical connection string format.
+
+**ADR-007: Deepgram API for voice in production, faster-whisper locally**
+Reason: Railway free tier RAM limits make self-hosted faster-whisper unreliable in production. Deepgram's free tier (45 minutes per month) is sufficient for demos. Local development continues to use self-hosted Whisper via Docker.
 
 **ADR-004: PostgreSQL + pgvector over dedicated vector DB**
 Reason: Reduces infrastructure complexity. pgvector handles semantic search over transaction history adequately at demo scale. Pinecone migration path documented for production.
@@ -279,5 +289,6 @@ To continue building in a new Claude Code session:
 3. Say: "Read CLAUDE.md and continue" — Claude Code will have full context
 
 **Last updated:** 22 March 2026
-**Current phase:** Layer 4 — backend code
+**Current phase:** Layer 4 — backend code (deployment architecture confirmed)
 **GitHub repo:** `https://github.com/bukkasreenivas/finvoice`
+**Deployment:** Vercel (frontend) + Railway (backend) + Supabase (DB) + Upstash (Redis)

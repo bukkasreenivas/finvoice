@@ -1,7 +1,16 @@
 version: "3.9"
 
+# Local development stack.
+# Production deployment uses a split architecture:
+#   Frontend  → Vercel
+#   Backend   → Railway  (supports WebSockets and long-running processes)
+#   Database  → Supabase (PostgreSQL 15 + pgvector, free tier)
+#   Cache     → Upstash  (serverless Redis, free tier)
+#   Voice     → Deepgram API (managed, set DEEPGRAM_API_KEY in prod)
+
 services:
   backend:
+    # Production equivalent: Railway service
     build: ./backend
     ports:
       - "8000:8000"
@@ -9,10 +18,11 @@ services:
       - DATABASE_URL=postgresql://finvoice:finvoice@db:5432/finvoice
       - REDIS_URL=redis://redis:6379
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - PLAID_CLIENT_ID=${PLAID_CLIENT_ID}
-      - PLAID_SECRET=${PLAID_SECRET}
-      - PLAID_ENV=${PLAID_ENV:-sandbox}
-      - FINNHUB_API_KEY=${FINNHUB_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - FINVU_CLIENT_ID=${FINVU_CLIENT_ID}
+      - FINVU_CLIENT_SECRET=${FINVU_CLIENT_SECRET}
+      - AA_ENV=${AA_ENV:-sandbox}
+      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY}
       - SECRET_KEY=${SECRET_KEY}
       - ENVIRONMENT=${ENVIRONMENT:-development}
     depends_on:
@@ -25,6 +35,7 @@ services:
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
   frontend:
+    # Production equivalent: Vercel
     build: ./frontend
     ports:
       - "3000:3000"
@@ -37,6 +48,8 @@ services:
       - ./frontend/src:/app/src
 
   db:
+    # Production equivalent: Supabase (PostgreSQL 15 + pgvector enabled by default)
+    # Replace DATABASE_URL with your Supabase connection string in production.
     image: pgvector/pgvector:pg15
     environment:
       - POSTGRES_USER=finvoice
@@ -53,6 +66,8 @@ services:
       retries: 5
 
   redis:
+    # Production equivalent: Upstash (serverless Redis, free tier)
+    # Replace REDIS_URL with your Upstash connection string in production.
     image: redis:7-alpine
     ports:
       - "6379:6379"

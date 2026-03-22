@@ -10,6 +10,10 @@
 ![Whisper](https://img.shields.io/badge/Whisper-faster--whisper-yellow)
 ![AA](https://img.shields.io/badge/Account_Aggregator-sandbox-blue)
 ![Docker](https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white)
+![Vercel](https://img.shields.io/badge/Frontend-Vercel-black?logo=vercel&logoColor=white)
+![Railway](https://img.shields.io/badge/Backend-Railway-7B2FBE?logo=railway&logoColor=white)
+![Supabase](https://img.shields.io/badge/Database-Supabase-3ECF8E?logo=supabase&logoColor=white)
+![Upstash](https://img.shields.io/badge/Cache-Upstash-00E9A3)
 
 ---
 
@@ -73,16 +77,17 @@ All Tax Optimizer and Investment Advisor responses include the disclaimer: "This
 | Backend | Python 3.11, FastAPI, LangGraph |
 | Frontend | React 18, TypeScript, WebSocket |
 | LLM | Claude claude-sonnet-4-6 (primary), Groq Llama 3 (fallback) |
-| Voice | faster-whisper (self-hosted) |
-| Database | PostgreSQL 15 + pgvector extension |
-| Cache | Redis (60s TTL on all market data) |
+| Voice | faster-whisper (local), Deepgram API (production) |
+| Database | PostgreSQL 15 + pgvector — Supabase free tier (production) |
+| Cache | Redis — Upstash free tier (production) |
 | Banking data | Account Aggregator framework via Finvu sandbox |
 | Market data | NSE/BSE via yfinance (.NS suffix), CoinGecko |
-| Deployment | Docker Compose (local), Railway or Render (demo) |
+| Frontend deployment | Vercel |
+| Backend deployment | Railway (supports WebSockets and long-running processes) |
 
 ---
 
-## Quick start
+## Quick start (local)
 
 Prerequisites: Docker and Docker Compose installed.
 
@@ -94,23 +99,37 @@ cp .env.example .env
 docker-compose up
 ```
 
-The app is available at `http://localhost:3000`.
+The app is available at `http://localhost:3000`. The backend API is at `http://localhost:8000`. API documentation is at `http://localhost:8000/docs`.
 
-The backend API is at `http://localhost:8000`.
+---
 
-API documentation is at `http://localhost:8000/docs`.
+## Production deployment
+
+FinVoice uses a split deployment — each service runs on the platform best suited to it.
+
+| Component | Platform | Notes |
+|---|---|---|
+| React frontend | Vercel | Connect GitHub repo, set `REACT_APP_API_URL` and `REACT_APP_WS_URL` to Railway backend URL |
+| FastAPI backend | Railway | Supports WebSockets and long-running processes. Vercel serverless does not. |
+| PostgreSQL + pgvector | Supabase | Free tier. pgvector enabled by default. Note: database pauses after one week of inactivity — resume via the Supabase dashboard. |
+| Redis cache | Upstash | Serverless Redis, free tier (10,000 commands per day) |
+| Voice transcription | Deepgram API | Free tier: 45 minutes per month. Set `DEEPGRAM_API_KEY` on Railway. Local dev uses self-hosted Whisper. |
 
 ---
 
 ## Environment variables
 
-Copy `.env.example` to `.env` and fill in the values. Required keys:
+Copy `.env.example` to `.env` and fill in the values.
 
+Required for local development:
 - `ANTHROPIC_API_KEY` — Claude API access
 - `FINVU_CLIENT_ID` and `FINVU_CLIENT_SECRET` — Finvu Account Aggregator sandbox credentials
-- `DATABASE_URL` — PostgreSQL connection string (pre-configured in Docker Compose)
 
-All other variables are optional or have defaults. See `.env.example` for the full list.
+Additional variables required for production (see `.env.example` for all):
+- `SUPABASE_URL` and `SUPABASE_ANON_KEY` — Supabase project credentials
+- `UPSTASH_REDIS_URL` — Upstash Redis connection string
+- `DEEPGRAM_API_KEY` — Deepgram voice transcription
+- `RAILWAY_BACKEND_URL` — set on Vercel so the frontend knows where to connect
 
 ---
 
