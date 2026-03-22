@@ -5,7 +5,8 @@ python-multipart==0.0.9       # file uploads for voice endpoint
 websockets==12.0
 
 # ─── LLM and agent orchestration ─────────────────────────────────────────────
-anthropic==0.40.0
+# anthropic>=0.41.0 required by langchain-anthropic 0.3.x
+anthropic==0.49.0
 langchain==0.3.7
 langchain-anthropic==0.3.4
 langchain-community==0.3.7
@@ -35,8 +36,9 @@ numpy==1.26.4
 pandas==2.2.2
 
 # ─── Utilities ────────────────────────────────────────────────────────────────
+# pydantic>=2.7.4 required by langchain 0.3.7
 pydantic==2.7.4
-pydantic-settings==2.2.1
+pydantic-settings==2.3.4
 python-jose[cryptography]==3.3.0   # JWT
 passlib[bcrypt]==1.7.4
 python-dotenv==1.0.1
