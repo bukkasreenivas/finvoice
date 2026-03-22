@@ -17,13 +17,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Download the Whisper base model at build time so it is available at runtime
-# without a network call. Skipped in CI by setting SKIP_WHISPER_DOWNLOAD=1.
-ARG SKIP_WHISPER_DOWNLOAD=0
+# Skip Whisper model download on Railway (RAM constrained) — Deepgram handles
+# voice in production. Set SKIP_WHISPER_DOWNLOAD=0 only for local Docker builds.
+ARG SKIP_WHISPER_DOWNLOAD=1
 RUN if [ "$SKIP_WHISPER_DOWNLOAD" = "0" ]; then \
     python -c "from faster_whisper import WhisperModel; WhisperModel('base', device='cpu', compute_type='int8')"; \
     fi
 
+# Railway injects $PORT at runtime. The railway.toml startCommand uses $PORT.
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
