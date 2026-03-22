@@ -19,10 +19,10 @@ class Settings(BaseSettings):
     # Cache
     REDIS_URL: str = "redis://localhost:6379"
 
-    # Account Aggregator
-    FINVU_CLIENT_ID: str = ""
-    FINVU_CLIENT_SECRET: str = ""
-    AA_ENV: str = "sandbox"
+    # Account Aggregator — Finvu sandbox
+    # JWT issued by Finvu after you email support@cookiejar.co.in with your public key.
+    # Leave blank to use the built-in synthetic Indian transaction data fallback.
+    FINVU_CLIENT_API_KEY: str = ""
 
     # Voice
     DEEPGRAM_API_KEY: str = ""

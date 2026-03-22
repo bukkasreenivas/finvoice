@@ -5,11 +5,20 @@ The Account Aggregator (AA) framework is an RBI-regulated data-sharing
 architecture. Financial data flows from Financial Information Providers (FIPs)
 to Financial Information Users (FIUs) only with explicit user consent.
 
-This module uses the Finvu sandbox, which returns realistic synthetic Indian
-transaction data. No real banking data is used anywhere in this project. See
-ADR-003 in the repository wiki for the full compliance scope decision.
+Finvu sandbox base URL: https://aauat.finvu.in/API/V1
+Docs: https://finvu.github.io/sandbox/finvu_aa_integration
 
-Finvu sandbox docs: https://finvu.in/docs/sandbox
+Authentication: every request requires a `client_api_key` header containing
+a JWT issued by Finvu. Requests must also carry an `x-jws-signature` header
+(RS256 detached JWS of the request body). Financial data is returned encrypted
+using ECDH Curve25519 key material exchanged during the FI request step.
+
+To get sandbox credentials: email support@cookiejar.co.in with your public key.
+They issue the `client_api_key` JWT (valid for six months in sandbox).
+
+This project uses the synthetic data fallback when FINVU_CLIENT_API_KEY is not
+set. This is the default for local development. No real banking data is used.
+See ADR-003 for the full compliance scope decision.
 """
 
 from __future__ import annotations
@@ -27,30 +36,24 @@ from backend.models.schemas import AccountSummary, Transaction
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
-FINVU_BASE_URL = "https://webapi.finvu.in/ConsentAPI"
-SANDBOX_BASE_URL = "https://sandbox.finvu.in/ConsentAPI"
+# Finvu sandbox base URL — confirmed from official docs
+SANDBOX_BASE_URL = "https://aauat.finvu.in/API/V1"
 
-_BASE = SANDBOX_BASE_URL if settings.AA_ENV == "sandbox" else FINVU_BASE_URL
-
-
-# ─── Auth ─────────────────────────────────────────────────────────────────────
+_BASE = SANDBOX_BASE_URL
 
 
-async def _get_token() -> str:
+def _headers() -> dict[str, str]:
     """
-    Exchange client credentials for a Finvu bearer token.
-    The token is valid for one hour. In production, cache this in Redis.
+    Build the required Finvu API headers.
+    client_api_key is a JWT issued by Finvu for the sandbox.
+    x-jws-signature must be an RS256 detached JWS of the request body.
+    For the synthetic fallback path this function is never called.
     """
-    async with httpx.AsyncClient(timeout=10) as client:
-        response = await client.post(
-            f"{_BASE}/v2/token",
-            json={
-                "client_id": settings.FINVU_CLIENT_ID,
-                "client_secret": settings.FINVU_CLIENT_SECRET,
-            },
-        )
-        response.raise_for_status()
-        return response.json()["access_token"]
+    return {
+        "content-Type": "application/json",
+        "Accept": "application/json",
+        "client_api_key": settings.FINVU_CLIENT_API_KEY,
+    }
 
 
 # ─── Main interface ───────────────────────────────────────────────────────────
@@ -60,18 +63,16 @@ async def _get_token() -> str:
 async def fetch_accounts(user_id: str) -> list[AccountSummary]:
     """
     Fetch all linked accounts for a user from the Finvu sandbox.
-    Returns a list of AccountSummary objects with balances.
+    Falls back to synthetic data if FINVU_CLIENT_API_KEY is not set.
     """
-    if not settings.FINVU_CLIENT_ID:
+    if not settings.FINVU_CLIENT_API_KEY:
         return _sandbox_accounts(user_id)
 
     try:
-        token = await _get_token()
         async with httpx.AsyncClient(timeout=15) as client:
             response = await client.get(
-                f"{_BASE}/v2/accounts",
-                headers={"Authorization": f"Bearer {token}"},
-                params={"userId": user_id},
+                f"{_BASE}/Accounts/linked/{user_id}",
+                headers=_headers(),
             )
             response.raise_for_status()
             return _parse_accounts(response.json())
@@ -88,22 +89,22 @@ async def fetch_transactions(
     """
     Fetch transactions for a given account over a date range.
     Defaults to the last 90 days if no dates are supplied.
+    Falls back to synthetic data if FINVU_CLIENT_API_KEY is not set.
     """
-    if not settings.FINVU_CLIENT_ID:
+    if not settings.FINVU_CLIENT_API_KEY:
         return _sandbox_transactions(account_id, from_date, to_date)
 
     from_date = from_date or (datetime.utcnow() - timedelta(days=90))
     to_date = to_date or datetime.utcnow()
 
     try:
-        token = await _get_token()
         async with httpx.AsyncClient(timeout=15) as client:
             response = await client.get(
-                f"{_BASE}/v2/accounts/{account_id}/transactions",
-                headers={"Authorization": f"Bearer {token}"},
+                f"{_BASE}/FI/fetch/{account_id}",
+                headers=_headers(),
                 params={
-                    "from": from_date.strftime("%Y-%m-%d"),
-                    "to": to_date.strftime("%Y-%m-%d"),
+                    "from": from_date.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                    "to": to_date.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
                 },
             )
             response.raise_for_status()
