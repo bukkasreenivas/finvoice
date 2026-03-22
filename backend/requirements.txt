@@ -24,7 +24,8 @@ alembic==1.13.1               # schema migrations
 redis[asyncio]==5.0.4
 
 # ─── Voice transcription ──────────────────────────────────────────────────────
-faster-whisper==1.0.1         # local dev — CPU inference
+# faster-whisper is NOT installed in production — Railway uses Deepgram (ADR-007).
+# Install manually for local dev: pip install faster-whisper==1.0.1
 deepgram-sdk==3.2.7           # production
 
 # ─── Market data ──────────────────────────────────────────────────────────────
