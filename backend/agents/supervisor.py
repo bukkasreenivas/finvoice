@@ -15,14 +15,11 @@ It does not stream, is cached for identical queries, and adds < 500ms latency.
 
 from __future__ import annotations
 
-import json
 from typing import AsyncIterator, TypedDict
 
-from anthropic import AsyncAnthropic
 from langgraph.graph import END, StateGraph
 
 from backend.agents import budget, investment, spending, tax
-from backend.config import settings
 from backend.models.schemas import AgentName
 
 # ─── State ────────────────────────────────────────────────────────────────────
@@ -39,44 +36,55 @@ class FinVoiceState(TypedDict):
 
 # ─── Routing ──────────────────────────────────────────────────────────────────
 
-ROUTER_SYSTEM = """You are a routing classifier for a personal finance assistant.
-Classify the user query into exactly one of these agent categories:
+# Keyword sets for each agent. Checked in priority order.
+# Local classification runs in < 1ms and avoids a full Claude API round trip
+# (previously ~500ms–2s using Haiku) before the specialist agent even starts.
+_INVESTMENT_KEYWORDS = {
+    "stock", "stocks", "share", "shares", "portfolio", "nse", "bse", "sensex",
+    "nifty", "mutual fund", "mf", "sip", "equity", "crypto", "bitcoin", "eth",
+    "invest", "investment", "returns", "dividend", "ipo", "demat", "broker",
+    "trading", "market", "fund", "nav", "largecap", "midcap", "smallcap",
+    "intraday", "futures", "options", "commodity", "gold", "silver",
+}
 
-  spending_analyst   — transaction history, spending patterns, category analysis, anomaly detection
-  investment_advisor — stock prices, portfolio performance, mutual funds, crypto, market data
-  tax_optimizer      — income tax, deductions, ITR, capital gains, GST, tax-loss harvesting
-  budget_planner     — monthly cash flow, savings goals, "am I on track", projections, EMI planning
+_TAX_KEYWORDS = {
+    "tax", "itr", "income tax", "80c", "80d", "hra", "lta", "deduction",
+    "deductions", "capital gain", "ltcg", "stcg", "tds", "gst", "pan",
+    "assessment", "refund", "filing", "return", "cbdt", "regime", "slab",
+    "exemption", "rebate", "surcharge", "cess", "advance tax", "audit",
+    "ca", "chartered accountant", "tax-loss", "harvesting",
+}
 
-Respond with a JSON object only. No explanation. Example: {"agent": "spending_analyst"}"""
+_BUDGET_KEYWORDS = {
+    "budget", "save", "saving", "savings", "on track", "afford", "goal",
+    "goals", "emi", "loan", "projection", "forecast", "cash flow", "cashflow",
+    "monthly", "next month", "how much left", "surplus", "deficit",
+    "sip target", "financial goal", "emergency fund", "net worth",
+}
 
 
-async def route_query(query: str) -> AgentName:
+def route_query(query: str) -> AgentName:
     """
-    Classify the query and return the target agent name.
-    Falls back to spending_analyst if classification fails.
+    Classify the query using local keyword matching.
+    Runs in < 1ms. Falls back to spending_analyst if no keywords match.
     """
-    client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY, timeout=30.0)
+    q = query.lower()
+    words = set(q.split())
 
-    try:
-        message = await client.messages.create(
-            model="claude-haiku-4-5-20251001",  # Fast and cheap for classification
-            max_tokens=32,
-            system=ROUTER_SYSTEM,
-            messages=[{"role": "user", "content": query}],
-        )
-        raw = message.content[0].text.strip()
-        data = json.loads(raw)
-        agent_str = data.get("agent", "spending_analyst")
-        return AgentName(agent_str)
-    except Exception:
-        return AgentName.spending
+    if words & _INVESTMENT_KEYWORDS or any(kw in q for kw in _INVESTMENT_KEYWORDS if " " in kw):
+        return AgentName.investment
+    if words & _TAX_KEYWORDS or any(kw in q for kw in _TAX_KEYWORDS if " " in kw):
+        return AgentName.tax
+    if words & _BUDGET_KEYWORDS or any(kw in q for kw in _BUDGET_KEYWORDS if " " in kw):
+        return AgentName.budget
+    return AgentName.spending
 
 
 # ─── Graph nodes ──────────────────────────────────────────────────────────────
 
 
 async def _route_node(state: FinVoiceState) -> FinVoiceState:
-    agent = await route_query(state["query"])
+    agent = route_query(state["query"])
     return {**state, "routed_to": agent.value}
 
 
@@ -128,8 +136,8 @@ async def stream_response(
     Entry point for the chat router.
     Yields (agent_name, token) tuples so the WebSocket can annotate each token.
     """
-    # Step 1 — classify
-    agent = await route_query(query)
+    # Step 1 — classify (local keyword match, < 1ms, no API call)
+    agent = route_query(query)
 
     # Step 2 — stream from the specialist agent
     agent_stream: AsyncIterator[str]
