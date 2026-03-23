@@ -43,4 +43,5 @@ Thumbs.db
 # Whisper model files (large, download at runtime)
 *.pt
 *.bin
-models/
+# Exclude only the top-level models/ cache directory, not backend/models/ Python package
+/models/
