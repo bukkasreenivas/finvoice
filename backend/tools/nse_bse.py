@@ -64,23 +64,27 @@ def _fetch_quote_sync(symbol: str) -> dict | None:
     """
     Blocking yfinance fetch. Must be run in a thread executor.
 
-    yfinance 0.2.x uses fast_info with attribute access (snake_case),
-    not the old dict-style .get() with camelCase keys.
-    Index symbols (^NSEI, ^BSESN) skip ticker.info because it is slow
-    and does not contain meaningful PE ratio or market cap for indices.
+    Uses ticker.history(period="2d") rather than fast_info because history()
+    works reliably for both Indian stocks and index symbols (^NSEI, ^BSESN).
+    fast_info is unreliable for Indian indices and its attribute names differ
+    across yfinance versions.
+    Index symbols skip ticker.info because it is slow and does not contain
+    meaningful PE ratio or market cap for indices.
     """
     try:
         ticker = yf.Ticker(symbol)
-        fi = ticker.fast_info
+        hist = ticker.history(period="2d")
+        if hist.empty:
+            return None
 
-        price = float(getattr(fi, "last_price", None) or 0)
-        prev_close = float(getattr(fi, "previous_close", None) or price)
+        price = float(hist["Close"].iloc[-1])
+        prev_close = float(hist["Close"].iloc[-2]) if len(hist) >= 2 else price
         if price == 0:
             return None
 
         change = price - prev_close
         change_pct = (change / prev_close * 100) if prev_close else 0.0
-        volume = int(getattr(fi, "three_month_average_volume", None) or 0)
+        volume = int(hist["Volume"].iloc[-1]) if "Volume" in hist.columns else 0
 
         # Skip the heavy ticker.info call for index symbols.
         is_index = symbol.startswith("^")

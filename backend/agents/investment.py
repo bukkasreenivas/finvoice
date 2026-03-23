@@ -15,12 +15,13 @@ Example queries:
 
 from __future__ import annotations
 
+import asyncio
 from typing import AsyncIterator
 
 from anthropic import AsyncAnthropic
 
 from backend.config import settings
-from backend.tools.nse_bse import get_market_overview, get_quote
+from backend.tools.nse_bse import get_crypto_price, get_market_overview, get_multiple_quotes, get_quote
 
 SEBI_DISCLAIMER = (
     "\n\n---\n*This is informational only and does not constitute regulated financial "
@@ -73,11 +74,71 @@ async def run(
         yield SEBI_DISCLAIMER
 
 
+# Maps natural language names and ticker aliases to NSE symbols.
+# Checked case-insensitively against the user query.
+_EQUITY_ALIASES: dict[str, str] = {
+    "RELIANCE": "RELIANCE.NS",
+    "TCS": "TCS.NS",
+    "INFY": "INFY.NS",
+    "INFOSYS": "INFY.NS",
+    "HDFCBANK": "HDFCBANK.NS",
+    "HDFC BANK": "HDFCBANK.NS",
+    "HDFC": "HDFCBANK.NS",
+    "ICICIBANK": "ICICIBANK.NS",
+    "ICICI BANK": "ICICIBANK.NS",
+    "ICICI": "ICICIBANK.NS",
+    "WIPRO": "WIPRO.NS",
+    "AXISBANK": "AXISBANK.NS",
+    "AXIS BANK": "AXISBANK.NS",
+    "SBIN": "SBIN.NS",
+    "SBI": "SBIN.NS",
+    "STATE BANK": "SBIN.NS",
+    "BAJFINANCE": "BAJFINANCE.NS",
+    "BAJAJ FINANCE": "BAJFINANCE.NS",
+    "TATAMOTORS": "TATAMOTORS.NS",
+    "TATA MOTORS": "TATAMOTORS.NS",
+    "ADANIENT": "ADANIENT.NS",
+    "HINDUNILVR": "HINDUNILVR.NS",
+    "HUL": "HINDUNILVR.NS",
+    "HINDUSTAN UNILEVER": "HINDUNILVR.NS",
+    "ITC": "ITC.NS",
+    "KOTAKBANK": "KOTAKBANK.NS",
+    "KOTAK BANK": "KOTAKBANK.NS",
+    "KOTAK": "KOTAKBANK.NS",
+    "LT": "LT.NS",
+    "L&T": "LT.NS",
+    "LARSEN": "LT.NS",
+    "NIFTYBEES": "NIFTYBEES.NS",
+    "NIFTY BEES": "NIFTYBEES.NS",
+    "JUNIORBEES": "JUNIORBEES.NS",
+    "GOLDBEES": "GOLDBEES.NS",
+    "BANKBEES": "BANKBEES.NS",
+}
+
+# Maps natural language names to CoinGecko coin IDs.
+_CRYPTO_ALIASES: dict[str, str] = {
+    "ETH": "ethereum",
+    "ETHEREUM": "ethereum",
+    "BTC": "bitcoin",
+    "BITCOIN": "bitcoin",
+    "MATIC": "matic-network",
+    "POLYGON": "matic-network",
+    "SOL": "solana",
+    "SOLANA": "solana",
+    "BNB": "binancecoin",
+    "XRP": "ripple",
+    "ADA": "cardano",
+    "DOGE": "dogecoin",
+    "DOGECOIN": "dogecoin",
+}
+
+
 async def _build_context(query: str) -> str:
     """
     Pull relevant market data based on the query.
-    Always includes a market overview. Adds a specific quote if a symbol
-    is detected in the query.
+    Always includes a market overview. Adds equity quotes and crypto prices
+    for any symbols or natural language names detected in the query.
+    All data fetches run in parallel where possible.
     """
     lines = ["Current Indian market overview:"]
 
@@ -91,23 +152,50 @@ async def _build_context(query: str) -> str:
     except Exception:
         lines.append("  Market data temporarily unavailable.")
 
-    # Detect a ticker symbol in the query (crude but effective for demos)
     query_upper = query.upper()
-    known_symbols = [
-        "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK",
-        "WIPRO", "AXISBANK", "SBIN", "BAJFINANCE", "TATAMOTORS",
-        "ADANIENT", "HINDUNILVR", "ITC", "KOTAKBANK", "LT",
-    ]
-    for sym in known_symbols:
-        if sym in query_upper:
-            quote = await get_quote(f"{sym}.NS")
-            if quote:
-                lines.append(f"\n{sym} (NSE):")
-                lines.append(f"  Price: ₹{quote.price:,.2f}")
-                lines.append(f"  Change: {'+' if quote.change >= 0 else ''}{quote.change_pct:.2f}%")
-                if quote.pe_ratio:
-                    lines.append(f"  P/E: {quote.pe_ratio:.1f}")
-                if quote.market_cap:
-                    lines.append(f"  Market cap: ₹{quote.market_cap / 1e7:,.0f} Cr")
+
+    # Detect equity symbols using alias map. Longer aliases are checked first
+    # so "HDFC BANK" matches before the shorter "HDFC" alias.
+    detected_nse: list[str] = []
+    for alias in sorted(_EQUITY_ALIASES, key=len, reverse=True):
+        nse_sym = _EQUITY_ALIASES[alias]
+        if alias in query_upper and nse_sym not in detected_nse:
+            detected_nse.append(nse_sym)
+
+    # Detect crypto symbols.
+    detected_crypto: list[str] = []
+    for alias, coin_id in _CRYPTO_ALIASES.items():
+        if alias in query_upper and coin_id not in detected_crypto:
+            detected_crypto.append(coin_id)
+
+    # Fetch equity and crypto data in parallel.
+    equity_task = get_multiple_quotes(detected_nse) if detected_nse else asyncio.sleep(0)
+    crypto_tasks = [get_crypto_price(c) for c in detected_crypto]
+
+    results = await asyncio.gather(equity_task, *crypto_tasks, return_exceptions=True)
+    quotes = results[0] if detected_nse else []
+    crypto_results = results[1:] if detected_crypto else []
+
+    if isinstance(quotes, list):
+        for quote in quotes:
+            short = quote.symbol.replace(".NS", "").replace(".BO", "")
+            lines.append(f"\n{short} (NSE):")
+            lines.append(f"  Price: ₹{quote.price:,.2f}")
+            lines.append(
+                f"  Change: {'+' if quote.change >= 0 else ''}{quote.change_pct:.2f}%"
+            )
+            if quote.pe_ratio:
+                lines.append(f"  P/E: {quote.pe_ratio:.1f}")
+            if quote.market_cap:
+                lines.append(f"  Market cap: ₹{quote.market_cap / 1e7:,.0f} Cr")
+
+    for coin_id, result in zip(detected_crypto, crypto_results):
+        if isinstance(result, dict) and result:
+            inr_price = result.get("inr", 0)
+            change_24h = result.get("inr_24h_change", 0) or 0
+            direction = "+" if change_24h >= 0 else ""
+            lines.append(f"\n{coin_id.title()}:")
+            lines.append(f"  Price: ₹{inr_price:,.2f}")
+            lines.append(f"  24h change: {direction}{change_24h:.2f}%")
 
     return "\n".join(lines)
