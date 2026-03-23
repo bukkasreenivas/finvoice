@@ -110,6 +110,17 @@ async def chat_ws(
             final_agent: AgentName = AgentName.spending
 
             try:
+                # Send an immediate empty token so Railway's load balancer
+                # does not close the idle WebSocket before the agent responds.
+                await websocket.send_json(
+                    StreamToken(
+                        token="",
+                        agent=AgentName.spending,
+                        session_id=session_id,
+                        done=False,
+                    ).model_dump()
+                )
+
                 async for agent, token in supervisor.stream_response(
                     incoming.message, session_id
                 ):

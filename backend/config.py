@@ -3,6 +3,7 @@ Application settings loaded from environment variables.
 Pydantic-settings reads from the .env file in development.
 """
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,6 +16,16 @@ class Settings(BaseSettings):
 
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://finvoice:finvoice@localhost:5432/finvoice"
+
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def fix_db_url(cls, v: str) -> str:
+        # Railway injects postgresql:// or postgres:// — both need +asyncpg for SQLAlchemy async.
+        if v.startswith("postgres://"):
+            return v.replace("postgres://", "postgresql+asyncpg://", 1)
+        if v.startswith("postgresql://"):
+            return v.replace("postgresql://", "postgresql+asyncpg://", 1)
+        return v
 
     # Cache
     REDIS_URL: str = "redis://localhost:6379"
