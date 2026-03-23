@@ -164,10 +164,18 @@ async def chat_ws(
                     except asyncio.CancelledError:
                         pass
 
+            except WebSocketDisconnect:
+                # Client or proxy closed the connection — exit this session cleanly.
+                raise
             except Exception as exc:
-                await websocket.send_json(
-                    WSError(error=str(exc), code=500).model_dump()
-                )
+                # Send an error token back to the client. Swallow any send failure
+                # that occurs if the socket was already closed by the time we get here.
+                try:
+                    await websocket.send_json(
+                        WSError(error=str(exc), code=500).model_dump()
+                    )
+                except Exception:
+                    pass
 
             latency_ms = int((time.monotonic() - t0) * 1000)
             disclaimer = supervisor.requires_disclaimer(final_agent)

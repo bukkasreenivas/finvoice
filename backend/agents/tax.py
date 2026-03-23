@@ -94,7 +94,7 @@ async def run(
     session_id: str,
 ) -> AsyncIterator[str]:
     """Stream a response to a tax-related query."""
-    client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY, timeout=30.0)
+    client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY, timeout=30.0, max_retries=0)
 
     messages = [{"role": "user", "content": query}]
 
