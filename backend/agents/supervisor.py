@@ -55,7 +55,7 @@ async def route_query(query: str) -> AgentName:
     Classify the query and return the target agent name.
     Falls back to spending_analyst if classification fails.
     """
-    client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY, timeout=30.0)
 
     try:
         message = await client.messages.create(

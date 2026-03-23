@@ -39,7 +39,7 @@ async def run(
     session_id: str,
 ) -> AsyncIterator[str]:
     """Stream a response to a budget-related query."""
-    client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY, timeout=30.0)
 
     context = await _build_context(session_id)
 

@@ -45,7 +45,7 @@ async def run(
     accounts_data is pre-fetched by the supervisor to avoid duplicate API calls.
     If not provided, this agent fetches it directly.
     """
-    client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY, timeout=30.0)
 
     # Build transaction context for the prompt
     context = await _build_context(session_id, accounts_data)
