@@ -14,6 +14,7 @@ is used.
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from typing import Any
@@ -110,40 +111,58 @@ async def chat_ws(
             final_agent: AgentName = AgentName.spending
 
             try:
-                # Send an immediate empty token so Railway's load balancer
-                # does not close the idle WebSocket before the agent responds.
-                await websocket.send_json(
-                    StreamToken(
-                        token="",
-                        agent=AgentName.spending,
-                        session_id=session_id,
-                        done=False,
-                    ).model_dump()
-                )
+                # Periodic keepalive — sends an empty token every 5 seconds while
+                # the agent is processing. Railway's load balancer closes idle
+                # WebSocket connections after 20 seconds; this keeps the connection
+                # alive for as long as the agent needs to produce its first token.
+                async def _keepalive() -> None:
+                    while True:
+                        await asyncio.sleep(5)
+                        try:
+                            await websocket.send_json(
+                                StreamToken(
+                                    token="",
+                                    agent=AgentName.spending,
+                                    session_id=session_id,
+                                    done=False,
+                                ).model_dump()
+                            )
+                        except Exception:
+                            break
 
-                async for agent, token in supervisor.stream_response(
-                    incoming.message, session_id
-                ):
-                    final_agent = agent
-                    tokens.append(token)
+                keepalive_task = asyncio.create_task(_keepalive())
+
+                try:
+                    async for agent, token in supervisor.stream_response(
+                        incoming.message, session_id
+                    ):
+                        final_agent = agent
+                        tokens.append(token)
+                        await websocket.send_json(
+                            StreamToken(
+                                token=token,
+                                agent=agent,
+                                session_id=session_id,
+                                done=False,
+                            ).model_dump()
+                        )
+
+                    # Send the terminal done=True token
                     await websocket.send_json(
                         StreamToken(
-                            token=token,
-                            agent=agent,
+                            token="",
+                            agent=final_agent,
                             session_id=session_id,
-                            done=False,
+                            done=True,
                         ).model_dump()
                     )
 
-                # Send the terminal done=True token
-                await websocket.send_json(
-                    StreamToken(
-                        token="",
-                        agent=final_agent,
-                        session_id=session_id,
-                        done=True,
-                    ).model_dump()
-                )
+                finally:
+                    keepalive_task.cancel()
+                    try:
+                        await keepalive_task
+                    except asyncio.CancelledError:
+                        pass
 
             except Exception as exc:
                 await websocket.send_json(
