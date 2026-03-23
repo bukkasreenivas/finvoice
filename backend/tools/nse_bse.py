@@ -7,12 +7,17 @@ CoinGecko is used for cryptocurrency prices.
 
 All market data responses are cached in Redis for 60 seconds to avoid
 hitting rate limits and to keep latency under the 4-second target.
+
+yfinance is a synchronous library. All calls are dispatched to a thread
+executor via asyncio.get_running_loop().run_in_executor so they never
+block the asyncio event loop (which would prevent the WebSocket keepalive
+task from firing and trigger Railway's 20-second idle timeout).
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
-from datetime import datetime
 
 import httpx
 import redis.asyncio as aioredis
@@ -55,12 +60,68 @@ async def _cache_set(key: str, value: dict) -> None:
 # ─── NSE / BSE quotes ─────────────────────────────────────────────────────────
 
 
+def _fetch_quote_sync(symbol: str) -> dict | None:
+    """
+    Blocking yfinance fetch. Must be run in a thread executor.
+
+    yfinance 0.2.x uses fast_info with attribute access (snake_case),
+    not the old dict-style .get() with camelCase keys.
+    Index symbols (^NSEI, ^BSESN) skip ticker.info because it is slow
+    and does not contain meaningful PE ratio or market cap for indices.
+    """
+    try:
+        ticker = yf.Ticker(symbol)
+        fi = ticker.fast_info
+
+        price = float(getattr(fi, "last_price", None) or 0)
+        prev_close = float(getattr(fi, "previous_close", None) or price)
+        if price == 0:
+            return None
+
+        change = price - prev_close
+        change_pct = (change / prev_close * 100) if prev_close else 0.0
+        volume = int(getattr(fi, "three_month_average_volume", None) or 0)
+
+        # Skip the heavy ticker.info call for index symbols.
+        is_index = symbol.startswith("^")
+        if is_index:
+            name = symbol
+            pe_ratio = None
+            market_cap = 0.0
+        else:
+            try:
+                info = ticker.info
+                name = info.get("longName", symbol)
+                pe_ratio = float(info.get("trailingPE") or 0) or None
+                market_cap = float(info.get("marketCap") or 0)
+            except Exception:
+                name = symbol
+                pe_ratio = None
+                market_cap = 0.0
+
+        return {
+            "symbol": symbol,
+            "name": name,
+            "price": price,
+            "change": round(change, 2),
+            "change_pct": round(change_pct, 2),
+            "volume": volume,
+            "market_cap": market_cap,
+            "pe_ratio": pe_ratio,
+            "exchange": "NSE" if symbol.endswith(".NS") else "BSE",
+        }
+    except Exception:
+        return None
+
+
 async def get_quote(symbol: str) -> Quote | None:
     """
     Fetch a real-time quote for an NSE or BSE symbol.
 
     If the symbol does not include a suffix, .NS (NSE) is assumed.
     Returns None if yfinance cannot find the symbol.
+    The blocking yfinance call runs in a thread executor so the event
+    loop remains free for keepalive and other coroutines.
     """
     if "." not in symbol:
         symbol = f"{symbol.upper()}.NS"
@@ -71,32 +132,34 @@ async def get_quote(symbol: str) -> Quote | None:
         return Quote(**cached)
 
     try:
-        ticker = yf.Ticker(symbol)
-        info = ticker.fast_info
-
-        # fast_info keys available without a full download
-        price = float(info.get("lastPrice", 0) or 0)
-        prev_close = float(info.get("previousClose", price) or price)
-        change = price - prev_close
-        change_pct = (change / prev_close * 100) if prev_close else 0.0
-
-        quote = Quote(
-            symbol=symbol,
-            name=ticker.info.get("longName", symbol),
-            price=price,
-            change=round(change, 2),
-            change_pct=round(change_pct, 2),
-            volume=int(info.get("threeMonthAverageVolume", 0) or 0),
-            market_cap=float(info.get("marketCap", 0) or 0),
-            pe_ratio=float(ticker.info.get("trailingPE", 0) or 0) or None,
-            exchange="NSE" if symbol.endswith(".NS") else "BSE",
-        )
-
+        loop = asyncio.get_running_loop()
+        data = await loop.run_in_executor(None, _fetch_quote_sync, symbol)
+        if data is None:
+            return None
+        quote = Quote(**data)
         await _cache_set(cache_key, quote.model_dump())
         return quote
-
     except Exception:
         return None
+
+
+def _fetch_historical_sync(symbol: str, period: str, interval: str) -> list[dict]:
+    """Blocking yfinance historical download. Must be run in a thread executor."""
+    try:
+        df = yf.download(symbol, period=period, interval=interval, progress=False)
+        return [
+            {
+                "date": str(idx.date()),
+                "open": round(float(row["Open"]), 2),
+                "high": round(float(row["High"]), 2),
+                "low": round(float(row["Low"]), 2),
+                "close": round(float(row["Close"]), 2),
+                "volume": int(row["Volume"]),
+            }
+            for idx, row in df.iterrows()
+        ]
+    except Exception:
+        return []
 
 
 async def get_historical(
@@ -117,33 +180,26 @@ async def get_historical(
     if cached:
         return cached
 
-    try:
-        df = yf.download(symbol, period=period, interval=interval, progress=False)
-        records = [
-            {
-                "date": str(idx.date()),
-                "open": round(float(row["Open"]), 2),
-                "high": round(float(row["High"]), 2),
-                "low": round(float(row["Low"]), 2),
-                "close": round(float(row["Close"]), 2),
-                "volume": int(row["Volume"]),
-            }
-            for idx, row in df.iterrows()
-        ]
+    loop = asyncio.get_running_loop()
+    records = await loop.run_in_executor(
+        None, _fetch_historical_sync, symbol, period, interval
+    )
+    if records:
         await _cache_set(cache_key, records)
-        return records
-    except Exception:
-        return []
+    return records
 
 
 async def get_multiple_quotes(symbols: list[str]) -> list[Quote]:
-    """Fetch quotes for multiple symbols, skipping any that fail."""
-    results = []
-    for symbol in symbols:
-        quote = await get_quote(symbol)
-        if quote:
-            results.append(quote)
-    return results
+    """
+    Fetch quotes for multiple symbols in parallel.
+    Using asyncio.gather means all yfinance calls run concurrently in
+    separate threads rather than sequentially, keeping total latency
+    close to the slowest single call rather than the sum of all calls.
+    """
+    results = await asyncio.gather(
+        *[get_quote(s) for s in symbols], return_exceptions=True
+    )
+    return [r for r in results if isinstance(r, Quote)]
 
 
 # ─── CoinGecko ────────────────────────────────────────────────────────────────
@@ -193,5 +249,5 @@ MAJOR_INDICES = {
 
 
 async def get_market_overview() -> list[Quote]:
-    """Fetch current values for the major Indian indices."""
+    """Fetch current values for the major Indian indices in parallel."""
     return await get_multiple_quotes(list(MAJOR_INDICES.values()))
