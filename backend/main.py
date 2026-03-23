@@ -70,8 +70,15 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup() -> None:
     log.info("finvoice.startup", environment=settings.ENVIRONMENT)
-    await init_db()
-    log.info("finvoice.db_ready")
+    try:
+        await init_db()
+        log.info("finvoice.db_ready")
+    except Exception as exc:  # noqa: BLE001
+        # Database may not yet be configured (e.g. Railway deploy before
+        # Supabase env vars are set). Log the error and continue — the
+        # health check must still pass so Railway marks the deploy live.
+        # DB-dependent endpoints will return 503 until DATABASE_URL is set.
+        log.warning("finvoice.db_unavailable", error=str(exc))
 
 
 # ─── Routers ──────────────────────────────────────────────────────────────────
