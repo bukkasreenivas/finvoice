@@ -15,6 +15,7 @@ is used.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 from typing import Any
@@ -32,6 +33,8 @@ from backend.models.schemas import (
     WSError,
     WSIncoming,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -106,6 +109,7 @@ async def chat_ws(
             incoming = WSIncoming(**raw)
             session_id = incoming.session_id or str(uuid.uuid4())
             t0 = time.monotonic()
+            logger.info("ws:recv session=%s query=%r", session_id, incoming.message[:80])
 
             tokens: list[str] = []
             final_agent: AgentName = AgentName.spending
@@ -127,17 +131,28 @@ async def chat_ws(
                                     done=False,
                                 ).model_dump()
                             )
+                            logger.debug("ws:keepalive session=%s", session_id)
                         except Exception:
                             break
 
                 keepalive_task = asyncio.create_task(_keepalive())
+                logger.info("ws:keepalive_started session=%s", session_id)
 
                 try:
+                    token_count = 0
                     async for agent, token in supervisor.stream_response(
                         incoming.message, session_id
                     ):
+                        if token_count == 0:
+                            logger.info(
+                                "ws:first_token agent=%s session=%s elapsed_ms=%d",
+                                agent.value,
+                                session_id,
+                                int((time.monotonic() - t0) * 1000),
+                            )
                         final_agent = agent
                         tokens.append(token)
+                        token_count += 1
                         await websocket.send_json(
                             StreamToken(
                                 token=token,
@@ -146,6 +161,14 @@ async def chat_ws(
                                 done=False,
                             ).model_dump()
                         )
+
+                    logger.info(
+                        "ws:done session=%s agent=%s tokens=%d latency_ms=%d",
+                        session_id,
+                        final_agent.value,
+                        token_count,
+                        int((time.monotonic() - t0) * 1000),
+                    )
 
                     # Send the terminal done=True token
                     await websocket.send_json(
@@ -168,6 +191,7 @@ async def chat_ws(
                 # Client or proxy closed the connection — exit this session cleanly.
                 raise
             except Exception as exc:
+                logger.exception("ws:error session=%s: %s", session_id, exc)
                 # Send an error token back to the client. Swallow any send failure
                 # that occurs if the socket was already closed by the time we get here.
                 try:
