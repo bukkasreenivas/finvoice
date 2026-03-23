@@ -154,16 +154,21 @@ async def chat_ws(
             disclaimer = supervisor.requires_disclaimer(final_agent)
             response_text = "".join(tokens)
 
-            await _write_audit_log(
-                db=db,
-                session_id=session_id,
-                query=incoming.message,
-                input_mode=incoming.input_mode.value,
-                routed_to=final_agent.value,
-                response_length=len(response_text),
-                latency_ms=latency_ms,
-                disclaimer_shown=disclaimer,
-            )
+            try:
+                await _write_audit_log(
+                    db=db,
+                    session_id=session_id,
+                    query=incoming.message,
+                    input_mode=incoming.input_mode.value,
+                    routed_to=final_agent.value,
+                    response_length=len(response_text),
+                    latency_ms=latency_ms,
+                    disclaimer_shown=disclaimer,
+                )
+            except Exception:
+                # Audit log failure must not disrupt the user session.
+                # Acceptable data loss until the database is connected.
+                pass
 
     except WebSocketDisconnect:
         pass
