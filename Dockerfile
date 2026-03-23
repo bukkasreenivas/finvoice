@@ -9,9 +9,13 @@ WORKDIR /app
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend/ as a subdirectory so Python can resolve
+# Copy backend/ as a package directory so Python resolves
 # "from backend.config import settings" and similar absolute imports.
+# PYTHONPATH=/app is set explicitly so uvicorn always finds the package
+# regardless of how the process is invoked.
 COPY backend/ ./backend/
+
+ENV PYTHONPATH=/app
 
 EXPOSE 8000
 
